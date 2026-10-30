@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# Volumes created before VS Code tunnels lack these folders
+mkdir -p ~/work/.vscode ~/work/.vscode-server
+if code tunnel user show >/dev/null 2>&1; then
+  kpi-vscode >/tmp/kpi-vscode.log 2>&1 &
+fi
+exec jupyterhub-singleuser "$@"

@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# VS Code tunnel. On your PC: VS Code → Remote Explorer → Tunnels → kpi-<login>.
+# First run asks to log in with GitHub; later sessions start the tunnel by themselves.
+code tunnel user show >/dev/null 2>&1 || code tunnel user login --provider github
+exec code tunnel --accept-server-license-terms --name "kpi-${JUPYTERHUB_USER}"

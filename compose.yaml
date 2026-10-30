@@ -1,0 +1,35 @@
+name: kpi-rover-hub
+
+services:
+  hub:
+    build:
+      context: ./hub
+      args:
+        JUPYTERHUB_VERSION: ${JUPYTERHUB_VERSION}
+    image: kpi-rover-hub:${VERSION}
+    container_name: kpi-rover-hub
+    env_file: .env
+    environment:
+      SESSION_IMAGE: kpi-rover-session:${VERSION}
+    ports:
+      - "${HUB_BIND}:8000"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./hub/jupyterhub_config.py:/srv/jupyterhub/jupyterhub_config.py:ro
+      - ./users:/srv/jupyterhub/users:ro
+      - data:/data
+    networks:
+      - net
+    restart: unless-stopped
+    logging:
+      options:
+        max-size: 10m
+        max-file: "3"
+
+volumes:
+  data:
+    name: kpi-rover-hub-data
+
+networks:
+  net:
+    name: kpi-rover-hub

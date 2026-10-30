@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+check() { if eval "$2" 2>/dev/null | grep -qi nvidia; then echo "OK    $1"; else echo "FAIL  $1"; fi; }
+
+check "GPU" "nvidia-smi -L"
+check "EGL" "/usr/bin/eglinfo"
+[ -n "${DISPLAY:-}" ] || { echo "Desktop not available"; exit 0; }
+check "vglrun NVIDIA" "vglrun -d egl glxinfo -B"
