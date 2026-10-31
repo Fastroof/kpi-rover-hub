@@ -78,8 +78,9 @@ usage() {
 
 Hub: ${URL} — logins and passwords in the users file, one "<user> <password>" per line.
 Session: Launcher → Desktop → KPI Rover. Code: ~/ros_ws (kept between sessions).
-  VS Code on your PC: run kpi-vscode in a session terminal once (GitHub login),
-  then VS Code → Remote Explorer → Tunnels → kpi-<login>.
+  First login clones and builds the code (~2 min, log: ~/work/kpi-setup.log).
+  Start over or switch the kpi_rover branch: kpi-setup [branch].
+  SSH / VS Code Remote-SSH from your PC: kpi-ssh "<public key>" in a session terminal.
   Update: cd ~/ros_ws/src/kpi_rover && git pull; colcon build only after C++ changes.
   3D apps from a terminal: vglrun -d egl <app>. GPU check: gpu-test in the Desktop terminal.
 Troubleshooting:
@@ -214,7 +215,7 @@ main() {
   set +a
   readonly SESSION_IMG="kpi-rover-session:${VERSION}"
   readonly HUB_IMG="kpi-rover-hub:${VERSION}"
-  readonly URL="http://${HUB_BIND/0.0.0.0/localhost}"
+  readonly URL="${HUB_URL}"
 
   local command="${1:-}"
   case "${command}" in

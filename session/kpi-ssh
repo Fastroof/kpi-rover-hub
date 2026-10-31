@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+# SSH from your PC into this session.
+# Usage: kpi-ssh "<public key>"   (on your PC: cat ~/.ssh/id_ed25519.pub)
+set -euo pipefail
+
+if [[ $# -ne 1 || "$1" != ssh-* ]]; then
+  echo 'Usage: kpi-ssh "ssh-ed25519 AAAA... you@pc"' >&2
+  echo 'Get the key on your PC: cat ~/.ssh/id_ed25519.pub (create it once: ssh-keygen -t ed25519)' >&2
+  exit 2
+fi
+
+keys=~/.ssh/authorized_keys
+touch "${keys}" && chmod 600 "${keys}"
+grep -qxF -- "$1" "${keys}" || echo "$1" >> "${keys}"
+
+# Reuse a saved token while the hub still accepts it
+token_file=~/.ssh/kpi-token
+api="${JUPYTERHUB_API_URL}"
+token="$(cat "${token_file}" 2>/dev/null || true)"
+if [[ -z "${token}" ]] || ! curl -fsS -o /dev/null -H "Authorization: token ${token}" "${api}/user"; then
+  token="$(curl -fsS -X POST -H "Authorization: token ${JUPYTERHUB_API_TOKEN}" \
+    -H "Content-Type: application/json" -d '{"note": "kpi-ssh"}' \
+    "${api}/users/${JUPYTERHUB_USER}/tokens" | python3 -c 'import json, sys; print(json.load(sys.stdin)["token"])')"
+  (umask 077 && echo "${token}" > "${token_file}")
+fi
+
+cat <<EOF
+Key added. On your PC:
+1. Install websocat: https://github.com/vi/websocat/releases
+2. Add to ~/.ssh/config:
+
+Host kpi-rover
+    User jovyan
+    ProxyCommand websocat --binary -H='Authorization: token ${token}' ${HUB_URL/http/ws}/user/${JUPYTERHUB_USER}/sshd/
+
+3. Connect: ssh kpi-rover   (or VS Code → Remote-SSH → kpi-rover)
+Your session must be running: log in to the hub first.
+EOF

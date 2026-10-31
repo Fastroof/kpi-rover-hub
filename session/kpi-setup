@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# Fresh ros_ws and kpi_rover_gui in ~/work. Usage: kpi-setup [kpi_rover branch]
+# An existing ros_ws is kept as ros_ws.<date>.
+set -eo pipefail
+branch="${1:-${KPI_ROVER_BRANCH}}"
+cd ~/work
+
+if [[ -e ros_ws ]]; then
+  mv ros_ws "ros_ws.$(date +%Y%m%d-%H%M%S)"
+fi
+git clone "${ROS_WS_REPO}" ros_ws
+cd ros_ws
+vcs import src < kpi-rover.repos
+git -C src/kpi_rover checkout "${branch}"
+source /opt/ros/jazzy/setup.bash
+colcon build
+
+[[ -d ~/work/kpi_rover_gui ]] || git clone "${GUI_REPO}" ~/work/kpi_rover_gui
+echo "kpi-setup: done (kpi_rover branch ${branch})"

@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Volumes created before VS Code tunnels lack these folders
-mkdir -p ~/work/.vscode ~/work/.vscode-server
-if code tunnel user show >/dev/null 2>&1; then
-  kpi-vscode >/tmp/kpi-vscode.log 2>&1 &
+# Volumes created before SSH support lack ~/work/.ssh
+mkdir -p -m 700 ~/work/.ssh
+# First login: clone and build the code in the background (log in ~/work)
+if [[ ! -e ~/work/ros_ws ]]; then
+  kpi-setup > ~/work/kpi-setup.log 2>&1 &
 fi
 exec jupyterhub-singleuser "$@"

@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# GUI_DIR from the host (mounted at /opt) wins over the student's own copy
+dir=/opt/kpi_rover_gui
+[[ -x "${dir}/kpi-rover-gui" ]] || dir=~/work/kpi_rover_gui
+exec "${dir}/kpi-rover-gui" "$@"
