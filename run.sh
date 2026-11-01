@@ -19,6 +19,7 @@ readonly -a COMMANDS=(
   "restart|apply .env and hub config (sessions keep running)"
   "logs|hub logs (Ctrl+C to exit)"
   "limit|<user> <cpus> [memory] — change limits of a running session"
+  "arena|start [world] [args] | stop | logs — shared Gazebo for kpi-arena"
   "build|build session and hub images"
   "check-host|driver, nvidia runtime, GPU in a container"
   "check-image|GPU and EGL in the session image"
@@ -82,6 +83,7 @@ Session: Launcher → Desktop → KPI Rover. Code: ~/ros_ws (kept between sessio
   Start over or switch the kpi_rover branch: kpi-setup [branch].
   SSH / VS Code Remote-SSH from your PC: kpi-ssh "<public key>" in a session terminal.
   Update: cd ~/ros_ws/src/kpi_rover && git pull; colcon build only after C++ changes.
+  Arena: ./run.sh arena start garden; in a session: KPI Rover → Shared arena, or kpi-arena (one robot for now).
   3D apps from a terminal: vglrun -d egl <app>. GPU check: gpu-test in the Desktop terminal.
 Troubleshooting:
   check-host FAIL       sudo nvidia-ctk runtime configure --runtime=docker && sudo systemctl restart docker
@@ -184,6 +186,37 @@ cmd_limit() {
   echo "kpi-rover-session-$1: $2 cpus${3:+, $3} (until the session stops)"
 }
 
+# Shared Gazebo server that robots from sessions join (session/kpi-arena).
+# Same image as the sessions, no limits, its own copy of the code in a volume.
+cmd_arena() {
+  require_docker
+  case "${1:-}" in
+    start)
+      shift
+      docker network inspect kpi-rover-hub >/dev/null 2>&1 || die "start the hub first: ./run.sh start"
+      local world="${1:-garden}"
+      (( $# == 0 )) || shift
+      docker rm -f "${ARENA}" >/dev/null 2>&1 || true
+      docker run -d --name "${ARENA}" --network kpi-rover-hub \
+        --gpus all -e NVIDIA_DRIVER_CAPABILITIES=all --shm-size 1g \
+        -e ROS_WS_REPO -e KPI_ROVER_BRANCH -e GUI_REPO \
+        -v kpi-rover-arena-work:/home/jovyan/work \
+        "${SESSION_IMG}" kpi-arena server world:="${world}" "$@" >/dev/null
+      echo "${ARENA}: world ${world} (first start builds the code and the world, a few minutes). Logs: ./run.sh arena logs"
+      ;;
+    stop)
+      docker rm -f "${ARENA}" >/dev/null
+      echo "${ARENA}: stopped"
+      ;;
+    logs)
+      docker logs -f --tail 100 "${ARENA}"
+      ;;
+    *)
+      usage_error "arena start [world] [launch_sim args] | stop | logs"
+      ;;
+  esac
+}
+
 cmd_setup() {
   if ! docker info >/dev/null 2>&1; then
     cmd_install
@@ -196,10 +229,10 @@ cmd_setup() {
 }
 
 cmd_clean() {
-  docker ps -aq --filter "name=^kpi-rover-session-" | xargs -r docker rm -f
+  docker ps -aq --filter "name=^kpi-rover-session-" --filter "name=^${ARENA}\$" | xargs -r docker rm -f
   docker compose down -v
-  if confirm "Delete user volumes (kpi-rover-work-*, their code)?"; then
-    docker volume ls -q --filter "name=^kpi-rover-work-" | xargs -r docker volume rm
+  if confirm "Delete user volumes (kpi-rover-work-*, their code) and the arena code?"; then
+    docker volume ls -q --filter "name=^kpi-rover-work-" --filter "name=^kpi-rover-arena-" | xargs -r docker volume rm
   fi
   if confirm "Delete images (~11 GB)?"; then
     docker rmi -f "${SESSION_IMG}" "${HUB_IMG}"
@@ -215,6 +248,7 @@ main() {
   set +a
   readonly SESSION_IMG="kpi-rover-session:${VERSION}"
   readonly HUB_IMG="kpi-rover-hub:${VERSION}"
+  readonly ARENA=kpi-rover-arena
   readonly URL="${HUB_URL}"
 
   local command="${1:-}"

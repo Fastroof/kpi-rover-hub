@@ -73,6 +73,7 @@ c.DockerSpawner.extra_host_config = {
     "device_requests": [docker.types.DeviceRequest(count=-1, capabilities=[["gpu"]])],
     "security_opt": ["seccomp=unconfined"],  # required by the desktop
     "shm_size": "1g",
+    "init": True,  # reaps zombies (e.g. of the ros2 daemon): jupyterhub-singleuser as PID 1 doesn't
 }
 
 # Desktop reports activity only every ~5 min

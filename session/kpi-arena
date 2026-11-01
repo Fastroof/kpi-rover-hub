@@ -1,0 +1,211 @@
+#!/usr/bin/env bash
+# Shared arena: one Gazebo server (container kpi-rover-arena, ./run.sh arena start)
+# that robots from sessions join. For now one robot at a time: kpi_rover names every robot my_bot.
+# The KPI Rover GUI joins the arena too (Worlds → Shared arena).
+#
+# Usage in a session:
+#   kpi-arena [launch_sim args]   put your robot into the arena (e.g. x_pose:=1 y_pose:=2); Ctrl+C removes it
+#   kpi-arena remove              remove a robot left in the arena
+#   kpi-arena exec <command>      run a command that talks to the arena (ros2 topic, teleop, rviz2)
+#   eval "$(kpi-arena env)"       the same for this whole terminal
+#   kpi-arena gazebo              the Gazebo window of the arena (downloads the meshes of its world first)
+#   kpi-arena info                world and world arguments of the arena, as JSON
+#   kpi-arena watch               download the map of the arena, then run while the arena runs
+# In the arena container: kpi-arena server [launch_sim args]
+set -eo pipefail
+
+ROBOT=my_bot
+# Arena traffic: Gazebo partition and ROS domain shared by the arena and the sessions in it.
+# Sessions outside the arena stay isolated (ROS on localhost, Gazebo partition = login).
+ARENA_ENV=(GZ_PARTITION=arena ROS_DOMAIN_ID=42 ROS_AUTOMATIC_DISCOVERY_RANGE=SUBNET)
+# The arena serves info.json, its map and its terrain meshes (assets.tar) over HTTP on the hub network
+PORT=8090
+URL="http://kpi-rover-arena:${PORT}"
+WWW=~/arena
+# Downloaded map of the arena in a session
+MAP_DIR=~/.cache/kpi_rover/arena_map
+
+die() {
+  echo "kpi-arena: $*" >&2
+  exit 1
+}
+
+ros_env() {
+  source /opt/ros/jazzy/setup.bash
+  [[ -f ~/ros_ws/install/setup.bash ]] || die "~/ros_ws is not built (kpi-setup)"
+  source ~/ros_ws/install/setup.bash
+}
+
+fetch() {
+  curl -fsS --max-time 5 "${URL}/$1"
+}
+
+# info and world of the running arena, or exit
+require_arena() {
+  info="$(fetch info.json 2>/dev/null)" || die "the arena is not running (on the server: ./run.sh arena start)"
+  world="$(json_get "${info}" world)"
+}
+
+json_get() {
+  python3 -c 'import json, sys; print(json.loads(sys.argv[1])[sys.argv[2]])' "$1" "$2"
+}
+
+json_list() {
+  python3 -c 'import json, sys; print(*json.loads(sys.argv[1]).get(sys.argv[2], []), sep="\n")' "$1" "$2"
+}
+
+download_assets() {
+  echo "kpi-arena: downloading the meshes of the arena world…"
+  curl -fsS --max-time 300 "${URL}/assets.tar" | tar -C ~ -x || die "could not download the meshes of the arena"
+}
+
+gazebo() {
+  local info world
+  require_arena
+  download_assets
+  ros_env
+  local -a run=()
+  [[ -z "${DISPLAY:-}" || -n "${VGL_ISACTIVE:-}" ]] || run=(vglrun -d egl)
+  exec "${run[@]}" ros2 launch ros_gz_sim gz_sim.launch.py gz_args:="-g -v4"
+}
+
+robot_in_arena() {
+  timeout 10 gz model --list 2>/dev/null | grep -qx "[[:space:]]*- ${ROBOT}"
+}
+
+remove_robot() {
+  gz service -s "/world/$1/remove" --reqtype gz.msgs.Entity --reptype gz.msgs.Boolean \
+    --timeout 5000 --req "name: \"${ROBOT}\" type: MODEL" >/dev/null || true
+}
+
+server() {
+  [[ -f ~/ros_ws/install/setup.bash ]] || kpi-setup
+  ros_env
+  # Generated terrain is cached in the volume: a restart of the arena doesn't build it again
+  if [[ ! -L ~/.cache ]]; then
+    mkdir -p ~/work/.cache && rm -rf ~/.cache && ln -s work/.cache ~/.cache
+  fi
+  rm -rf "${WWW}" && mkdir -p "${WWW}"
+  # Build the world once, for Gazebo and the map. Prints the world file, the world name, then the other launch args.
+  local -a built
+  mapfile -t built < <(python3 - "${WWW}/info.json" "$@" <<'EOF'
+import json, os, re, sys, time
+from ament_index_python.packages import get_package_share_directory
+worlds_dir = os.path.join(get_package_share_directory('kpi_rover'), 'worlds')
+sys.path.append(os.path.join(worlds_dir, 'lib'))
+import world_info
+
+cfg, rest = {'world': 'industrial-warehouse'}, []  # launch_sim default world
+for arg in sys.argv[2:]:
+    name, sep, value = arg.partition(':=')
+    if sep and name in ('world', 'world_args', 'floor', 'marking'):
+        cfg[name] = value
+    else:
+        rest.append(arg)
+args = world_info.parse_args(cfg.get('world_args', ''))
+args.update({name: cfg[name] for name in ('floor', 'marking') if cfg.get(name)})
+path = world_info.build(cfg['world'], args, worlds_dir)
+with open(path) as f:
+    sdf = f.read()
+# Folders in ~/.cache the world uses: the Gazebo window of a session needs them at the same paths
+home = os.path.expanduser('~') + '/'
+cache = re.escape(home + '.cache/')
+assets = sorted({os.path.dirname(p)[len(home):] for p in re.findall(cache + r'[^<>"\'\s]+', sdf)})
+# started: a restart of the arena with the same world is a new arena for the sessions
+info = dict(cfg, assets=assets, started=time.time())
+with open(sys.argv[1], 'w') as f:
+    json.dump(info, f)
+print(path, cfg['world'], *rest, sep='\n')
+EOF
+  )
+  (( ${#built[@]} >= 2 )) || die "the world was not built"
+  local world_file="${built[0]}" world="${built[1]}"
+  local -a assets
+  mapfile -t assets < <(json_list "$(cat "${WWW}/info.json")" assets)
+  (( ${#assets[@]} == 0 )) || tar -C ~ -cf "${WWW}/assets.tar" "${assets[@]}"
+  echo "kpi-arena: world ${world} (${world_file}), serving ${URL}"
+  python3 -m http.server --directory "${WWW}" "${PORT}" >/dev/null 2>&1 &
+  # The map, in a hidden Gazebo of its own; published when complete
+  (
+    python3 ~/ros_ws/install/kpi_rover/share/kpi_rover/worlds/tools/render_previews.py "${world}" \
+      --sdf "${world_file}" --out "${WWW}/map.new" --partition arena_map >/dev/null 2>&1 \
+      && mv "${WWW}/map.new" "${WWW}/map" && echo "kpi-arena: map ready" \
+      || echo "kpi-arena: the map could not be made" >&2
+  ) &
+  # The robot plugins (ros2_control) run here and read the config at the same path
+  # as in the sessions: ~/ros_ws/install/kpi_rover/...
+  exec ros2 launch kpi_rover launch_sim.launch.py robot:=false ui:=false world:="${world_file}" "${built[@]:2}"
+}
+
+join() {
+  local info world
+  ros_env
+  require_arena
+  if robot_in_arena; then
+    die "there is already a robot in the arena (one at a time for now). Remove it: kpi-arena remove"
+  fi
+  # shellcheck disable=SC2064  # world is local: expand it now, the trap runs after join returns
+  trap "remove_robot '${world}'" EXIT
+  echo "kpi-arena: joining world ${world}; Ctrl+C removes the robot"
+  ros2 launch kpi_rover launch_sim.launch.py gazebo:=false ui:=false "$@"
+}
+
+watch() {
+  local info world
+  require_arena
+  # The map is made when the arena starts (about half a minute)
+  local announced=''
+  until fetch map/map.json > /dev/null 2>&1; do
+    [[ -n "${announced}" ]] || echo "Waiting for the map of the arena…"
+    announced=1
+    sleep 2
+    [[ "$(fetch info.json 2>/dev/null)" == "${info}" ]] || die "the arena stopped"
+  done
+  rm -rf "${MAP_DIR}" && mkdir -p "${MAP_DIR}"
+  fetch map/map.json > "${MAP_DIR}/map.json"
+  fetch map/map.jpg > "${MAP_DIR}/map.jpg"
+  echo "Arena map: ${MAP_DIR}"
+  # Until the arena stops or restarts
+  while [[ "$(fetch info.json 2>/dev/null)" == "${info}" ]]; do
+    sleep 5
+  done
+  die "the arena stopped"
+}
+
+export "${ARENA_ENV[@]}"
+case "${1:-}" in
+  server)
+    shift
+    server "$@"
+    ;;
+  remove)
+    ros_env
+    require_arena
+    remove_robot "${world}"
+    echo "kpi-arena: removed ${ROBOT}"
+    ;;
+  exec)
+    shift
+    (( $# > 0 )) || die "usage: kpi-arena exec <command>"
+    exec "$@"
+    ;;
+  env)
+    printf 'export %s\n' "${ARENA_ENV[@]}"
+    ;;
+  info)
+    require_arena
+    echo "${info}"
+    ;;
+  watch)
+    watch
+    ;;
+  gazebo)
+    gazebo
+    ;;
+  -h | --help)
+    sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//'
+    ;;
+  *)
+    join "$@"
+    ;;
+esac

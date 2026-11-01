@@ -89,5 +89,5 @@ RUN mkdir -p ~/.colcon && printf 'build:\n  symlink-install: true\n' > ~/.colcon
  && ln -s ../work/.config/kpi_rover_gui ~/.config/kpi_rover_gui \
  && install -m 755 /usr/share/applications/kpi-rover.desktop ~/Desktop/
 
-COPY --chmod=755 gpu-test kpi-setup kpi-ssh kpi-rover-gui start-session /usr/local/bin/
+COPY --chmod=755 gpu-test kpi-arena kpi-setup kpi-ssh kpi-rover-gui start-session /usr/local/bin/
 CMD ["start-session"]
