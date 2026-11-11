@@ -1,29 +1,38 @@
 #!/usr/bin/env bash
 # Shared arena: one Gazebo server (container kpi-rover-arena, ./run.sh arena start)
-# that robots from sessions join. For now one robot at a time: kpi_rover names every robot my_bot.
+# that robots from sessions join, one robot per session, named by the login.
 # The KPI Rover GUI joins the arena too (Worlds → Shared arena).
 #
+# The controllers of every robot run in the arena (gz_ros2_control, namespace /<login>, ROS domain 42).
+# Everything else of the robot runs in the session with its usual topics; a domain_bridge carries
+# the few topics of the controllers between the two. Sessions don't see each other.
+#
 # Usage in a session:
-#   kpi-arena [launch_sim args]   put your robot into the arena (e.g. x_pose:=1 y_pose:=2); Ctrl+C removes it
-#   kpi-arena remove              remove a robot left in the arena
-#   kpi-arena exec <command>      run a command that talks to the arena (ros2 topic, teleop, rviz2)
+#   kpi-arena [sim_robot args]    put your robot into the arena (e.g. x_pose:=1 y_pose:=2); Ctrl+C removes it
+#   kpi-arena remove              remove your robot left in the arena
+#   kpi-arena exec <command>      run a command that talks to the Gazebo of the arena (gz); ROS commands work as usual
 #   eval "$(kpi-arena env)"       the same for this whole terminal
 #   kpi-arena gazebo              the Gazebo window of the arena (downloads the meshes of its world first)
 #   kpi-arena info                world and world arguments of the arena, as JSON
 #   kpi-arena watch               download the map of the arena, then run while the arena runs
-# In the arena container: kpi-arena server [launch_sim args]
+# In the arena container: kpi-arena server [world] [world args name:=value]
 set -eo pipefail
 
-ROBOT=my_bot
-# Arena traffic: Gazebo partition and ROS domain shared by the arena and the sessions in it.
-# Sessions outside the arena stay isolated (ROS on localhost, Gazebo partition = login).
-ARENA_ENV=(GZ_PARTITION=arena ROS_DOMAIN_ID=42 ROS_AUTOMATIC_DISCOVERY_RANGE=SUBNET)
+ROBOT="${JUPYTERHUB_USER:-}"
+# Gazebo partition of the arena; sessions outside the arena have their own (= login)
+ARENA_ENV=(GZ_PARTITION=arena)
+# ROS domain of the controllers in the arena. Session processes in it (the bridge, controller loading)
+# discover only the arena and their own session: localhost plus the arena as a static peer.
+ARENA_DOMAIN=42
+ARENA_ROS_ENV=(ROS_DOMAIN_ID="${ARENA_DOMAIN}" ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST ROS_STATIC_PEERS=kpi-rover-arena)
 # The arena serves info.json, its map and its terrain meshes (assets.tar) over HTTP on the hub network
 PORT=8090
 URL="http://kpi-rover-arena:${PORT}"
 WWW=~/arena
 # Downloaded map of the arena in a session
 MAP_DIR=~/.cache/kpi_rover/arena_map
+BRIDGE_CONFIG=~/.cache/kpi_rover/arena_bridge.yaml
+DOMAIN_BRIDGE=/opt/ros/jazzy/lib/domain_bridge/domain_bridge
 
 die() {
   echo "kpi-arena: $*" >&2
@@ -32,18 +41,18 @@ die() {
 
 ros_env() {
   source /opt/ros/jazzy/setup.bash
-  [[ -f ~/ros_ws/install/setup.bash ]] || die "~/ros_ws is not built (kpi-setup)"
-  source ~/ros_ws/install/setup.bash
+  [[ -f ~/ros_sw/install/setup.bash ]] || die "~/ros_sw is not built (kpi-setup)"
+  source ~/ros_sw/install/setup.bash
 }
 
 fetch() {
   curl -fsS --max-time 5 "${URL}/$1"
 }
 
-# info and world of the running arena, or exit
+# info and Gazebo world name of the running arena, or exit
 require_arena() {
   info="$(fetch info.json 2>/dev/null)" || die "the arena is not running (on the server: ./run.sh arena start)"
-  world="$(json_get "${info}" world)"
+  world="$(json_get "${info}" gz_world)"
 }
 
 json_get() {
@@ -69,6 +78,11 @@ gazebo() {
   exec "${run[@]}" ros2 launch ros_gz_sim gz_sim.launch.py gz_args:="-g -v4"
 }
 
+# The login names the robot: Gazebo model, ROS namespace
+require_robot_name() {
+  [[ "${ROBOT}" =~ ^[A-Za-z][A-Za-z0-9_]*$ ]] || die "the login '${ROBOT}' is not usable as a robot name (letters, digits, _)"
+}
+
 robot_in_arena() {
   timeout 10 gz model --list 2>/dev/null | grep -qx "[[:space:]]*- ${ROBOT}"
 }
@@ -79,47 +93,34 @@ remove_robot() {
 }
 
 server() {
-  [[ -f ~/ros_ws/install/setup.bash ]] || kpi-setup
+  export ROS_DOMAIN_ID="${ARENA_DOMAIN}" ROS_AUTOMATIC_DISCOVERY_RANGE=SUBNET
+  [[ -f ~/ros_sw/install/setup.bash ]] || kpi-setup
   ros_env
   # Generated terrain is cached in the volume: a restart of the arena doesn't build it again
   if [[ ! -L ~/.cache ]]; then
     mkdir -p ~/work/.cache && rm -rf ~/.cache && ln -s work/.cache ~/.cache
   fi
   rm -rf "${WWW}" && mkdir -p "${WWW}"
-  # Build the world once, for Gazebo and the map. Prints the world file, the world name, then the other launch args.
-  local -a built
-  mapfile -t built < <(python3 - "${WWW}/info.json" "$@" <<'EOF'
+  # The world is built once, for Gazebo and the map
+  local world="${1:-garden}"
+  (( $# == 0 )) || shift
+  local world_file
+  world_file="$(python3 -m kpi_rover_worlds.world_info --build "${world}" "$@")" || die "the world was not built"
+  python3 - "${WWW}/info.json" "${world}" "${world_file}" "$@" <<'EOF'
 import json, os, re, sys, time
-from ament_index_python.packages import get_package_share_directory
-worlds_dir = os.path.join(get_package_share_directory('kpi_rover'), 'worlds')
-sys.path.append(os.path.join(worlds_dir, 'lib'))
-import world_info
-
-cfg, rest = {'world': 'industrial-warehouse'}, []  # launch_sim default world
-for arg in sys.argv[2:]:
-    name, sep, value = arg.partition(':=')
-    if sep and name in ('world', 'world_args', 'floor', 'marking'):
-        cfg[name] = value
-    else:
-        rest.append(arg)
-args = world_info.parse_args(cfg.get('world_args', ''))
-args.update({name: cfg[name] for name in ('floor', 'marking') if cfg.get(name)})
-path = world_info.build(cfg['world'], args, worlds_dir)
+out, world, path, args = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4:]
 with open(path) as f:
     sdf = f.read()
 # Folders in ~/.cache the world uses: the Gazebo window of a session needs them at the same paths
 home = os.path.expanduser('~') + '/'
 cache = re.escape(home + '.cache/')
 assets = sorted({os.path.dirname(p)[len(home):] for p in re.findall(cache + r'[^<>"\'\s]+', sdf)})
+# gz_world: the world name in Gazebo (/world/<name>/...), not always the name of the world
+gz_world = re.search(r'<world\s+name=["\']([^"\']+)', sdf).group(1)
 # started: a restart of the arena with the same world is a new arena for the sessions
-info = dict(cfg, assets=assets, started=time.time())
-with open(sys.argv[1], 'w') as f:
-    json.dump(info, f)
-print(path, cfg['world'], *rest, sep='\n')
+with open(out, 'w') as f:
+    json.dump(dict(world=world, world_args=' '.join(args), gz_world=gz_world, assets=assets, started=time.time()), f)
 EOF
-  )
-  (( ${#built[@]} >= 2 )) || die "the world was not built"
-  local world_file="${built[0]}" world="${built[1]}"
   local -a assets
   mapfile -t assets < <(json_list "$(cat "${WWW}/info.json")" assets)
   (( ${#assets[@]} == 0 )) || tar -C ~ -cf "${WWW}/assets.tar" "${assets[@]}"
@@ -127,27 +128,75 @@ EOF
   python3 -m http.server --directory "${WWW}" "${PORT}" >/dev/null 2>&1 &
   # The map, in a hidden Gazebo of its own; published when complete
   (
-    python3 ~/ros_ws/install/kpi_rover/share/kpi_rover/worlds/tools/render_previews.py "${world}" \
+    ros2 run kpi_rover_worlds render_previews.py "${world}" \
       --sdf "${world_file}" --out "${WWW}/map.new" --partition arena_map >/dev/null 2>&1 \
       && mv "${WWW}/map.new" "${WWW}/map" && echo "kpi-arena: map ready" \
       || echo "kpi-arena: the map could not be made" >&2
   ) &
+  # Simulated time for the controller managers of the robots (use_sim_time): the sessions bridge it only in their domains
+  ros2 run ros_gz_bridge parameter_bridge /clock@rosgraph_msgs/msg/Clock[gz.msgs.Clock \
+    --ros-args -r __node:=arena_clock_bridge >/dev/null 2>&1 &
   # The robot plugins (ros2_control) run here and read the config at the same path
-  # as in the sessions: ~/ros_ws/install/kpi_rover/...
-  exec ros2 launch kpi_rover launch_sim.launch.py robot:=false ui:=false world:="${world_file}" "${built[@]:2}"
+  # as in the sessions: ~/ros_sw/install/kpi_rover_bringup/...
+  exec ros2 launch kpi_rover_bringup world.launch.py gui:=false world:="${world_file}"
+}
+
+# Topics of the robot's controllers: session topic → arena topic, and back (reversed)
+write_bridge_config() {
+  mkdir -p "$(dirname "${BRIDGE_CONFIG}")"
+  cat > "${BRIDGE_CONFIG}" <<EOF
+name: ${ROBOT}_arena_bridge
+from_domain: ${ROS_DOMAIN_ID:-0}
+to_domain: ${ARENA_DOMAIN}
+topics:
+  /robot_description:
+    type: std_msgs/msg/String
+    remap: /${ROBOT}/robot_description
+  /diff_drive_controller/cmd_vel:
+    type: geometry_msgs/msg/TwistStamped
+    remap: /${ROBOT}/diff_drive_controller/cmd_vel
+  /${ROBOT}/joint_states:
+    type: sensor_msgs/msg/JointState
+    reversed: true
+    remap: /joint_states
+  /${ROBOT}/diff_drive_controller/odom:
+    type: nav_msgs/msg/Odometry
+    reversed: true
+    remap: /odom
+EOF
+}
+
+# The controllers sim_robot.launch.py loads, here in the controller manager of the robot in the arena
+load_controllers() {
+  local controller
+  for controller in joint_state_broadcaster diff_drive_controller; do
+    env "${ARENA_ROS_ENV[@]}" ros2 control load_controller --set-state active \
+      -c "/${ROBOT}/controller_manager" "${controller}" || return
+  done
 }
 
 join() {
   local info world
+  require_robot_name
   ros_env
   require_arena
+  [[ -x "${DOMAIN_BRIDGE}" ]] || die "domain_bridge is not installed (./run.sh build)"
   if robot_in_arena; then
-    die "there is already a robot in the arena (one at a time for now). Remove it: kpi-arena remove"
+    die "your robot ${ROBOT} is already in the arena. Remove it: kpi-arena remove"
   fi
+  write_bridge_config
+  # The controller manager in the arena waits for the robot description, and Gazebo with it:
+  # the bridge starts before the robot is spawned.
+  env "${ARENA_ROS_ENV[@]}" "${DOMAIN_BRIDGE}" "${BRIDGE_CONFIG}" &
+  load_controllers &
+  # Background jobs of a script may ignore Ctrl+C: stopped here, with the children of load_controllers
   # shellcheck disable=SC2064  # world is local: expand it now, the trap runs after join returns
-  trap "remove_robot '${world}'" EXIT
-  echo "kpi-arena: joining world ${world}; Ctrl+C removes the robot"
-  ros2 launch kpi_rover launch_sim.launch.py gazebo:=false ui:=false "$@"
+  trap "set +e; for pid in \$(jobs -p); do pkill -P \$pid; kill \$pid; done 2>/dev/null; remove_robot '${world}'" EXIT
+  echo "kpi-arena: joining world ${world} as ${ROBOT}; Ctrl+C removes the robot"
+  # In the background: Ctrl+C ends the wait at once and the trap removes the robot, even if a node of the
+  # session hangs on shutdown (twist_stamper does at times)
+  ros2 launch kpi_rover_bringup sim_robot.launch.py robot_ns:="${ROBOT}" load_controllers:=false "$@" &
+  wait $!
 }
 
 watch() {
@@ -179,6 +228,7 @@ case "${1:-}" in
     server "$@"
     ;;
   remove)
+    require_robot_name
     ros_env
     require_arena
     remove_robot "${world}"
@@ -203,7 +253,7 @@ case "${1:-}" in
     gazebo
     ;;
   -h | --help)
-    sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//'
+    sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//'
     ;;
   *)
     join "$@"

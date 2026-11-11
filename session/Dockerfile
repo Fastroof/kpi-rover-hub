@@ -21,7 +21,7 @@ RUN V=$(curl -fsSL https://api.github.com/repos/ros-infrastructure/ros-apt-sourc
       "https://github.com/ros-infrastructure/ros-apt-source/releases/download/$V/ros2-apt-source_$V.noble_all.deb" \
  && apt-get install -y /tmp/ros2-apt-source.deb && rm /tmp/ros2-apt-source.deb \
  && apt-get update && apt-get install -y \
-      ros-jazzy-desktop ros-jazzy-ros-gz ros-jazzy-teleop-twist-keyboard \
+      ros-jazzy-desktop ros-jazzy-ros-gz ros-jazzy-teleop-twist-keyboard ros-jazzy-domain-bridge \
       python3-colcon-common-extensions python3-vcstool python3-rosdep build-essential \
       python3-pyqt5 \
  && rosdep init \
@@ -50,26 +50,25 @@ while IFS= read -r -d '' v; do
   case $v in PATH=*|ROS_*|GZ_*|NVIDIA_*|KPI_*|GUI_*|HUB_URL=*|JUPYTERHUB_*) export "$v" ;; esac
 done < /proc/1/environ
 source /opt/ros/jazzy/setup.bash
-[ -f ~/ros_ws/install/setup.bash ] && source ~/ros_ws/install/setup.bash
+[ -f ~/ros_sw/install/setup.bash ] && source ~/ros_sw/install/setup.bash
 EOF
 
 # System python3 (PyQt5, ROS) before the Jupyter venv
 ENV PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/opt/TurboVNC/bin:/opt/VirtualGL/bin:/opt/venv/bin \
     SHELL=/bin/bash
 
-# Only the dependencies of ros_ws: students clone the code themselves (kpi-setup).
+# Only the dependencies of ros_sw: students clone the code themselves (kpi-setup).
 # BUILD_TIME changes every build, so new dependencies are picked up.
 ARG BUILD_TIME
-ARG ROS_WS_REPO
-ARG KPI_ROVER_BRANCH
-RUN git clone "$ROS_WS_REPO" /tmp/ros_ws \
- && cd /tmp/ros_ws \
- && vcs import src < kpi-rover.repos \
- && git -C src/kpi_rover checkout "$KPI_ROVER_BRANCH" \
+ARG ROS_SW_REPO
+ARG ROS_SW_BRANCH
+RUN git clone -b "$ROS_SW_BRANCH" "$ROS_SW_REPO" /tmp/ros_sw \
+ && cd /tmp/ros_sw \
+ && vcs import src < deps.repos \
  && apt-get update \
  && rosdep update --rosdistro jazzy \
  && rosdep install --from-paths src --ignore-src -r -y --rosdistro jazzy \
- && rm -rf /tmp/ros_ws /var/lib/apt/lists/*
+ && rm -rf /tmp/ros_sw /var/lib/apt/lists/*
 
 RUN printf '%s\n' '[Desktop Entry]' 'Type=Application' 'Name=KPI Rover' \
       'Exec=/opt/VirtualGL/bin/vglrun -d egl /usr/local/bin/kpi-rover-gui' \
@@ -79,10 +78,11 @@ RUN printf '%s\n' '[Desktop Entry]' 'Type=Application' 'Name=KPI Rover' \
 USER jovyan
 WORKDIR /home/jovyan
 
-# GUI expects ~/ros_ws; GUI settings and SSH keys persist in ~/work
+# The GUI finds the workspace by KPI_WS; GUI settings and SSH keys persist in ~/work
+ENV KPI_WS=/home/jovyan/ros_sw
 RUN mkdir -p ~/.colcon && printf 'build:\n  symlink-install: true\n' > ~/.colcon/defaults.yaml \
  && rosdep update --rosdistro jazzy \
- && ln -s work/ros_ws ~/ros_ws \
+ && ln -s work/ros_sw ~/ros_sw \
  && mkdir -p -m 700 ~/work/.ssh && ln -s work/.ssh ~/.ssh \
  && mkdir -p ~/work/.config/kpi_rover_gui ~/.config ~/Desktop \
  && printf '[General]\nsim_gazebo_window=false\n' > ~/work/.config/kpi_rover_gui/kpi_rover_gui.conf \

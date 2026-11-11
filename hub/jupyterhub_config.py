@@ -67,7 +67,7 @@ c.DockerSpawner.environment = {
     "NVIDIA_VISIBLE_DEVICES": "all",
     "ROS_AUTOMATIC_DISCOVERY_RANGE": "LOCALHOST",
     "GZ_PARTITION": lambda spawner: spawner.user.name,
-    **{k: env[k] for k in ("ROS_WS_REPO", "KPI_ROVER_BRANCH", "GUI_REPO", "HUB_URL")},  # for kpi-setup, kpi-ssh
+    **{k: env[k] for k in ("ROS_SW_REPO", "ROS_SW_BRANCH", "GUI_REPO", "HUB_URL")},  # for kpi-setup, kpi-ssh
 }
 c.DockerSpawner.extra_host_config = {
     "device_requests": [docker.types.DeviceRequest(count=-1, capabilities=[["gpu"]])],

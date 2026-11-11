@@ -19,7 +19,7 @@ readonly -a COMMANDS=(
   "restart|apply .env and hub config (sessions keep running)"
   "logs|hub logs (Ctrl+C to exit)"
   "limit|<user> <cpus> [memory] — change limits of a running session"
-  "arena|start [world] [args] | stop | logs — shared Gazebo for kpi-arena"
+  "arena|start [world] [name:=value] | stop | logs — shared Gazebo for kpi-arena"
   "build|build session and hub images"
   "check-host|driver, nvidia runtime, GPU in a container"
   "check-image|GPU and EGL in the session image"
@@ -79,12 +79,12 @@ usage() {
 
 Hub: ${URL} — logins and passwords in the users file, one "<user> <password>" per line.
 Load: ${URL}/services/load/ — CPU, RAM, disk and GPU per session (admins; history of 6 h).
-Session: Launcher → Desktop → KPI Rover. Code: ~/ros_ws (kept between sessions).
+Session: Launcher → Desktop → KPI Rover. Code: ~/ros_sw (kept between sessions).
   First login clones and builds the code (~2 min, log: ~/work/kpi-setup.log).
-  Start over or switch the kpi_rover branch: kpi-setup [branch].
+  Start over or switch the ros_sw branch: kpi-setup [branch].
   SSH / VS Code Remote-SSH from your PC: kpi-ssh "<public key>" in a session terminal.
-  Update: cd ~/ros_ws/src/kpi_rover && git pull; colcon build only after C++ changes.
-  Arena: ./run.sh arena start garden; in a session: KPI Rover → Shared arena, or kpi-arena (one robot for now).
+  Update: cd ~/ros_sw && git pull; colcon build only after C++ changes or new files.
+  Arena: ./run.sh arena start garden; in a session: KPI Rover → Shared arena, or kpi-arena (one robot per session).
   3D apps from a terminal: vglrun -d egl <app>. GPU check: gpu-test in the Desktop terminal.
 Troubleshooting:
   check-host FAIL       sudo nvidia-ctk runtime configure --runtime=docker && sudo systemctl restart docker
@@ -142,7 +142,7 @@ cmd_build() {
   require_docker
   docker build -t "${SESSION_IMG}" \
     --build-arg BUILD_TIME="$(date +%s)" \
-    --build-arg JUPYTERHUB_VERSION --build-arg ROS_WS_REPO --build-arg KPI_ROVER_BRANCH --build-arg GUI_REPO \
+    --build-arg JUPYTERHUB_VERSION --build-arg ROS_SW_REPO --build-arg ROS_SW_BRANCH --build-arg GUI_REPO \
     session
   docker compose build
 }
@@ -200,9 +200,9 @@ cmd_arena() {
       docker rm -f "${ARENA}" >/dev/null 2>&1 || true
       docker run -d --name "${ARENA}" --network kpi-rover-hub \
         --gpus all -e NVIDIA_DRIVER_CAPABILITIES=all --shm-size 1g \
-        -e ROS_WS_REPO -e KPI_ROVER_BRANCH -e GUI_REPO \
+        -e ROS_SW_REPO -e ROS_SW_BRANCH -e GUI_REPO \
         -v kpi-rover-arena-work:/home/jovyan/work \
-        "${SESSION_IMG}" kpi-arena server world:="${world}" "$@" >/dev/null
+        "${SESSION_IMG}" kpi-arena server "${world}" "$@" >/dev/null
       echo "${ARENA}: world ${world} (first start builds the code and the world, a few minutes). Logs: ./run.sh arena logs"
       ;;
     stop)
@@ -213,7 +213,7 @@ cmd_arena() {
       docker logs -f --tail 100 "${ARENA}"
       ;;
     *)
-      usage_error "arena start [world] [launch_sim args] | stop | logs"
+      usage_error "arena start [world] [world args name:=value] | stop | logs"
       ;;
   esac
 }
