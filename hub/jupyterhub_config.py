@@ -83,6 +83,10 @@ c.JupyterHub.load_roles = [{
     "scopes": ["list:users", "read:users:activity", "read:servers", "delete:servers"],
     "services": ["idle-culler"],
 }, {
+    "name": "load",  # last activity of the sessions
+    "scopes": ["list:users", "read:users:activity", "read:servers"],
+    "services": ["load"],
+}, {
     "name": "server",  # default scopes + tokens, so kpi-ssh can create one
     "scopes": ["users:activity!user", "access:servers!server", "tokens!user"],
 }]
@@ -90,4 +94,12 @@ c.JupyterHub.services = [{
     "name": "idle-culler",
     "command": [sys.executable, "-m", "jupyterhub_idle_culler",
                 f"--timeout={env['IDLE_TIMEOUT']}", "--cull-every=60"],
+}, {
+    # System load page at /services/load/: admins only (access:services is in the admin role)
+    "name": "load",
+    "url": "http://kpi-rover-hub:10101",
+    "command": [sys.executable, "/srv/jupyterhub/load/service.py"],
+    "environment": {"PATH": env["PATH"]},
+    "oauth_no_confirm": True,
+    "display": True,
 }]

@@ -11,13 +11,24 @@ services:
     env_file: .env
     environment:
       SESSION_IMAGE: kpi-rover-session:${VERSION}
+      NVIDIA_DRIVER_CAPABILITIES: utility  # nvidia-smi for the load page
     ports:
       - "${HUB_BIND}:8000"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ./hub/jupyterhub_config.py:/srv/jupyterhub/jupyterhub_config.py:ro
       - ./users:/srv/jupyterhub/users:ro
+      - ./hub/load:/srv/jupyterhub/load:ro
       - data:/data
+    # The load page maps GPU processes (host PIDs) to containers
+    pid: host
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
     networks:
       - net
     restart: unless-stopped

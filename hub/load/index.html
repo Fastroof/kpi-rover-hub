@@ -1,0 +1,371 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>System load · KPI Rover</title>
+<meta name="xsrf" content="{{xsrf}}">
+<style>
+:root {
+  color-scheme: light;
+  --bg: #f4f4f2;
+  --surface: #fcfcfb;
+  --border: #e3e2de;
+  --grid: #ecebe7;
+  --text: #0b0b0b;
+  --text-2: #52514e;
+  --muted: #7a7974;
+  --series: #2a78d6;
+  --series-fill: rgba(42, 120, 214, 0.12);
+  --track: #e8e7e3;
+  --good: #0ca30c;
+  --warning: #fab219;
+  --serious: #ec835a;
+  --critical: #d03b3b;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --bg: #111110;
+    --surface: #1a1a19;
+    --border: #2e2e2c;
+    --grid: #262624;
+    --text: #f0efec;
+    --text-2: #c3c2b7;
+    --muted: #8f8e86;
+    --series: #3987e5;
+    --series-fill: rgba(57, 135, 229, 0.18);
+    --track: #2b2b29;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #111110; --surface: #1a1a19; --border: #2e2e2c; --grid: #262624;
+  --text: #f0efec; --text-2: #c3c2b7; --muted: #8f8e86;
+  --series: #3987e5; --series-fill: rgba(57, 135, 229, 0.18); --track: #2b2b29;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0; background: var(--bg); color: var(--text);
+  font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-variant-numeric: tabular-nums;
+}
+main { max-width: 1200px; margin: 0 auto; padding: 20px 16px 40px; }
+header { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; margin-bottom: 16px; }
+h1 { font-size: 20px; margin: 0; font-weight: 600; }
+h2 { font-size: 15px; margin: 28px 0 10px; font-weight: 600; }
+.sub { color: var(--muted); font-size: 13px; }
+.spacer { flex: 1; }
+nav a { color: var(--text-2); margin-left: 12px; font-size: 13px; }
+.ranges { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+.ranges button {
+  border: 0; background: var(--surface); color: var(--text-2); padding: 5px 12px; font: inherit; font-size: 13px; cursor: pointer;
+}
+.ranges button + button { border-left: 1px solid var(--border); }
+.ranges button[aria-pressed="true"] { background: var(--series); color: #fff; }
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; }
+.tile, .card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; }
+.tile { padding: 12px 14px; }
+.tile .label { color: var(--text-2); font-size: 12px; }
+.tile .value { font-size: 24px; font-weight: 600; margin-top: 2px; }
+.tile .detail { color: var(--muted); font-size: 12px; min-height: 17px; }
+.status { font-size: 12px; font-weight: 500; white-space: nowrap; }
+.status::before { content: ""; display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 5px; background: var(--dot); vertical-align: 1px; }
+.status.warning { --dot: var(--warning); }
+.status.serious { --dot: var(--serious); }
+.status.critical { --dot: var(--critical); }
+.charts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+@media (max-width: 720px) { .charts { grid-template-columns: 1fr; } }
+.card { padding: 12px 14px 8px; position: relative; }
+.card .title { display: flex; justify-content: space-between; gap: 8px; font-size: 13px; color: var(--text-2); }
+.card .title b { color: var(--text); font-weight: 600; }
+.chart svg { display: block; width: 100%; height: 150px; overflow: visible; }
+.chart .grid line { stroke: var(--grid); }
+.chart .axis text { fill: var(--muted); font-size: 11px; }
+.chart .line { fill: none; stroke: var(--series); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.chart .area { fill: var(--series-fill); }
+.chart .cross { stroke: var(--muted); stroke-dasharray: 3 3; }
+.chart .dot { fill: var(--series); stroke: var(--surface); stroke-width: 2; }
+.tip {
+  position: absolute; pointer-events: none; background: var(--text); color: var(--surface);
+  font-size: 12px; padding: 3px 7px; border-radius: 5px; white-space: nowrap; transform: translate(-50%, -100%);
+}
+.table-wrap { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; background: var(--surface); }
+th, td { padding: 8px 10px; text-align: left; border-bottom: 1px solid var(--border); vertical-align: middle; }
+th { font-size: 12px; font-weight: 500; color: var(--text-2); white-space: nowrap; }
+tr:last-child td { border-bottom: 0; }
+td.num { white-space: nowrap; }
+.who { font-weight: 600; }
+.kind { color: var(--muted); font-size: 12px; }
+.meter { display: flex; align-items: center; gap: 8px; min-width: 170px; }
+.meter .bar { flex: 0 0 70px; height: 6px; border-radius: 3px; background: var(--track); overflow: hidden; }
+.meter .bar i { display: block; height: 100%; border-radius: 3px; background: var(--series); }
+.meter .bar i.warning { background: var(--warning); }
+.meter .bar i.critical { background: var(--critical); }
+.meter small { color: var(--muted); }
+.spark { width: 110px; height: 26px; display: block; }
+.spark path { fill: none; stroke: var(--series); stroke-width: 1.5; vector-effect: non-scaling-stroke; }
+.empty { color: var(--muted); padding: 16px; text-align: center; }
+.note { color: var(--muted); font-size: 12px; margin-top: 8px; }
+.error { color: var(--critical); margin-left: 8px; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>System load</h1>
+    <span class="sub" id="updated">loading…</span>
+    <span class="spacer"></span>
+    <div class="ranges" role="group" aria-label="Time range">
+      <button data-range="900">15 min</button>
+      <button data-range="3600" aria-pressed="true">1 h</button>
+      <button data-range="21600">6 h</button>
+    </div>
+    <nav><a href="/hub/home">Hub</a><a href="/hub/admin">Admin</a></nav>
+  </header>
+
+  <section class="tiles" id="tiles" aria-label="Now"></section>
+
+  <h2>Host</h2>
+  <section class="charts">
+    <div class="card chart" id="c-cpu"></div>
+    <div class="card chart" id="c-mem"></div>
+    <div class="card chart" id="c-gpu"></div>
+    <div class="card chart" id="c-gpumem"></div>
+  </section>
+
+  <h2>Containers</h2>
+  <div class="card table-wrap" style="padding:0">
+    <table>
+      <thead><tr>
+        <th>Who</th><th>Session</th><th>CPU</th><th>CPU, <span id="spark-range">1 h</span></th><th>RAM</th><th>GPU</th>
+      </tr></thead>
+      <tbody id="rows"></tbody>
+    </table>
+  </div>
+  <p class="note">CPU in cores (100% of one core = 1). Limits come from the hub settings or <code>./run.sh limit</code>.
+    GPU per container is the GPU time and memory of its processes. History is kept in memory for 6 hours and starts over when the hub restarts.</p>
+</main>
+
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const GiB = 1024 ** 3;
+let range = 3600;
+let data = null;        // last response, merged
+let samples = [];
+let hist = new Map();   // container id → [[t, cores, bytes, gpuMB]]
+let lastT = 0;
+let hoverT = null;
+
+const fmtGiB = (b) => (b / GiB).toFixed(b < 10 * GiB ? 1 : 0) + " GB";
+const fmtMiB = (m) => m >= 1024 ? (m / 1024).toFixed(1) + " GB" : Math.round(m) + " MB";
+const fmtTime = (t) => new Date(t * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+const fmtAgo = (s) => s < 90 ? Math.round(s) + " s" : s < 5400 ? Math.round(s / 60) + " min" : (s / 3600).toFixed(1) + " h";
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+function level(frac) {
+  return frac >= 0.95 ? "critical" : frac >= 0.85 ? "warning" : "";
+}
+function statusText(frac) {
+  const l = level(frac);
+  return l ? `<span class="status ${l}">${l === "critical" ? "at limit" : "high"}</span>` : "";
+}
+
+// Charts: one series each, shared crosshair
+
+const charts = [
+  { el: "c-cpu", title: "CPU", key: "cpu", max: () => 100, fmt: (v) => v.toFixed(0) + "%", ticks: (m) => [0, 50, 100], tick: (v) => v + "%" },
+  { el: "c-mem", title: "RAM used", key: "mem", max: () => samples.at(-1)?.mem_total || 1, fmt: fmtGiB,
+    ticks: (m) => [0, m / 2, m], tick: (v) => (v / GiB).toFixed(0) + " GB" },
+  { el: "c-gpu", title: "GPU", key: "gpu", max: () => 100, fmt: (v) => v.toFixed(0) + "%", ticks: () => [0, 50, 100], tick: (v) => v + "%" },
+  { el: "c-gpumem", title: "GPU memory", key: "gpu_mem", max: () => (data?.gpus || []).reduce((a, g) => a + g.mem_total, 0) || 1,
+    fmt: fmtMiB, ticks: (m) => [0, m / 2, m], tick: (v) => (v / 1024).toFixed(1) + " GB" },
+];
+const H = 150, PL = 44, PR = 8, PT = 8, PB = 20;
+
+function drawChart(c) {
+  const el = $(c.el);
+  const now = data.now, t0 = now - range;
+  const W = c.W = Math.max(200, Math.round(el.clientWidth - 28));  // card padding; drawn 1:1, text not stretched
+  const pts = samples.filter((s) => s.t >= t0 && s[c.key] != null);
+  const max = c.max();
+  const x = (t) => PL + (t - t0) / range * (W - PL - PR);
+  const y = (v) => PT + (1 - Math.min(v, max) / max) * (H - PT - PB);
+  const last = pts.at(-1);
+  if (!el.dataset.ready) {
+    el.innerHTML = `<div class="title"><span>${c.title}</span><b></b></div><svg role="img" aria-label="${c.title} over time"></svg>`;
+    el.dataset.ready = 1;
+    const svg = el.querySelector("svg");
+    svg.addEventListener("pointermove", (e) => {
+      const r = svg.getBoundingClientRect();
+      const px = e.clientX - r.left;
+      hoverT = data.now - range + (px - PL) / (c.W - PL - PR) * range;
+      charts.forEach(drawHover);
+    });
+    svg.addEventListener("pointerleave", () => { hoverT = null; charts.forEach(drawHover); });
+  }
+  el.querySelector("svg").setAttribute("viewBox", `0 0 ${W} ${H}`);
+  el.querySelector(".title b").textContent = last ? c.fmt(last[c.key]) : "-";
+  if (!pts.length) {
+    el.querySelector("svg").innerHTML = `<text x="${W / 2}" y="${H / 2}" text-anchor="middle" fill="var(--muted)" font-size="12">${c.key.startsWith("gpu") && !data.gpus.length ? "no GPU access" : "collecting…"}</text>`;
+    return;
+  }
+  // Break the line where samples are missing (hub restart, a slow sample)
+  let line = "", area = "", seg = [];
+  const flush = () => {
+    if (!seg.length) return;
+    line += "M" + seg.map((p) => `${x(p.t).toFixed(1)},${y(p[c.key]).toFixed(1)}`).join("L");
+    area += `M${x(seg[0].t).toFixed(1)},${y(0)}` + seg.map((p) => `L${x(p.t).toFixed(1)},${y(p[c.key]).toFixed(1)}`).join("") + `L${x(seg.at(-1).t).toFixed(1)},${y(0)}Z`;
+    seg = [];
+  };
+  pts.forEach((p, i) => {
+    if (i && p.t - pts[i - 1].t > 4 * data.interval) flush();
+    seg.push(p);
+  });
+  flush();
+  const grid = c.ticks(max).map((v) => `<line x1="${PL}" x2="${W - PR}" y1="${y(v)}" y2="${y(v)}"/>`).join("");
+  const ylab = c.ticks(max).map((v) => `<text x="${PL - 6}" y="${y(v) + 4}" text-anchor="end">${c.tick(v)}</text>`).join("");
+  const n = W < 520 ? 2 : 4, xlab = Array.from({ length: n + 1 }, (_, i) => t0 + range * i / n)
+    .map((t, i) => `<text x="${x(t)}" y="${H - 4}" text-anchor="${i === 0 ? "start" : i === n ? "end" : "middle"}">${fmtTime(t)}</text>`).join("");
+  el.querySelector("svg").innerHTML =
+    `<g class="grid">${grid}</g><g class="axis">${ylab}${xlab}</g><path class="area" d="${area}"/><path class="line" d="${line}"/><g class="hover"></g>`;
+  c.pts = pts; c.x = x; c.y = y;
+  drawHover(c);
+}
+
+function drawHover(c) {
+  const el = $(c.el), g = el.querySelector(".hover");
+  el.querySelector(".tip")?.remove();
+  if (!g) return;
+  if (hoverT == null || !c.pts?.length) { g.innerHTML = ""; return; }
+  let p = c.pts[0];
+  for (const q of c.pts) if (Math.abs(q.t - hoverT) < Math.abs(p.t - hoverT)) p = q;
+  const px = c.x(p.t), py = c.y(p[c.key]);
+  g.innerHTML = `<line class="cross" x1="${px}" x2="${px}" y1="${PT}" y2="${H - PB}"/><circle class="dot" cx="${px}" cy="${py}" r="4"/>`;
+  const W = c.W, svg = el.querySelector("svg"), r = svg.getBoundingClientRect(), er = el.getBoundingClientRect();
+  const tip = document.createElement("div");
+  tip.className = "tip";
+  tip.textContent = `${fmtTime(p.t)} · ${c.fmt(p[c.key])}`;
+  const left = r.left - er.left + px / W * r.width;
+  tip.style.left = Math.max(60, Math.min(er.width - 60, left)) + "px";
+  tip.style.top = (r.top - er.top + py / H * r.height - 8) + "px";
+  el.appendChild(tip);
+}
+
+// Tiles
+
+function tile(label, value, detail, frac) {
+  return `<div class="tile"><div class="label">${label}</div><div class="value">${value}</div>` +
+    `<div class="detail">${detail} ${frac != null ? statusText(frac) : ""}</div></div>`;
+}
+
+function drawTiles() {
+  const s = samples.at(-1) || {};
+  const d = data.disk, g = data.gpus;
+  const sessions = data.containers.filter((c) => c.kind === "session").length;
+  const gpuTotal = g.reduce((a, x) => a + x.mem_total, 0);
+  const html = [
+    tile("CPU", (s.cpu ?? 0).toFixed(0) + "%", `${data.cpus} cores`, (s.cpu ?? 0) / 100),
+    tile("RAM", s.mem ? fmtGiB(s.mem) : "-", s.mem_total ? "of " + fmtGiB(s.mem_total) : "", s.mem / s.mem_total),
+    g.length ? tile("GPU", (s.gpu ?? 0).toFixed(0) + "%", esc(g.map((x) => x.name.replace(/^NVIDIA (GeForce )?/, "")).join(", ")), (s.gpu ?? 0) / 100)
+             : tile("GPU", "-", "no access to nvidia-smi"),
+    g.length ? tile("GPU memory", fmtMiB(s.gpu_mem ?? 0), `of ${fmtMiB(gpuTotal)} · ${s.gpu_temp ?? "-"} °C`, (s.gpu_mem ?? 0) / gpuTotal) : "",
+    tile("Disk free", fmtGiB(d.free), `of ${fmtGiB(d.total)}`, d.used / d.total),
+    tile("Sessions", sessions, data.containers.some((c) => c.kind === "arena") ? "arena running" : "arena stopped"),
+  ];
+  $("tiles").innerHTML = html.join("");
+}
+
+// Containers
+
+const ORDER = { session: 0, arena: 1, hub: 2, other: 3 };
+
+function meter(value, limit, text, limitText) {
+  const frac = limit ? value / limit : 0;
+  const l = level(frac);
+  return `<div class="meter"><span class="bar"><i class="${l}" style="width:${Math.min(100, frac * 100).toFixed(1)}%"></i></span>` +
+    `<span>${text} <small>${limitText}</small> ${statusText(frac)}</span></div>`;
+}
+
+function spark(h, max) {
+  const t0 = data.now - range, pts = h.filter((p) => p[0] >= t0);
+  if (pts.length < 2) return "";
+  const x = (t) => (t - t0) / range * 110, y = (v) => 24 - Math.min(v, max) / max * 22;
+  const d = "M" + pts.map((p) => `${x(p[0]).toFixed(1)},${y(p[1]).toFixed(1)}`).join("L");
+  const peak = Math.max(...pts.map((p) => p[1]));
+  return `<svg class="spark" viewBox="0 0 110 26" preserveAspectRatio="none"><title>peak ${peak.toFixed(1)} cores</title><path d="${d}"/></svg>`;
+}
+
+function drawRows() {
+  const hostMem = samples.at(-1)?.mem_total;
+  const rows = [...data.containers].sort((a, b) => ORDER[a.kind] - ORDER[b.kind] || a.who.localeCompare(b.who));
+  if (!rows.length) { $("rows").innerHTML = `<tr><td colspan="6" class="empty">No running containers</td></tr>`; return; }
+  $("rows").innerHTML = rows.map((c) => {
+    const started = c.started ? (Date.parse(c.started) / 1000) : null;
+    const up = started ? fmtAgo(Math.max(0, data.now - started)) : "-";
+    const u = data.users[c.who];
+    let session = `up ${up}`;
+    if (c.kind === "session" && u?.last_activity) {
+      const idle = data.now - Date.parse(u.last_activity) / 1000;
+      session += idle > 120 ? `<br><span class="kind">idle ${fmtAgo(idle)}</span>` : `<br><span class="kind">active</span>`;
+    }
+    const cpuMax = c.cpu_limit || data.cpus;
+    const cpu = meter(c.cpu, cpuMax, c.cpu.toFixed(1), c.cpu_limit ? `/ ${+c.cpu_limit.toFixed(1)}` : `/ ${data.cpus} (no limit)`);
+    const mem = meter(c.mem, c.mem_limit || hostMem, fmtGiB(c.mem), c.mem_limit ? `/ ${fmtGiB(c.mem_limit)}` : "(no limit)");
+    const gpu = c.gpu_procs ? `${c.gpu}% · ${fmtMiB(c.gpu_mem)}<br><span class="kind">${c.gpu_procs} process${c.gpu_procs > 1 ? "es" : ""}</span>` : `<span class="kind">-</span>`;
+    const kind = { session: "session", arena: "shared Gazebo", hub: "JupyterHub", other: "container" }[c.kind];
+    return `<tr><td><div class="who">${esc(c.who)}</div><div class="kind">${kind}</div></td><td class="num">${session}</td>` +
+      `<td class="num">${cpu}</td><td>${spark(hist.get(c.id) || [], cpuMax)}</td><td class="num">${mem}</td><td class="num">${gpu}</td></tr>`;
+  }).join("");
+}
+
+// Data
+
+async function refresh(reset) {
+  try {
+    const since = reset ? -range : lastT;
+    const resp = await fetch(`api/data?since=${since}`, {
+      cache: "no-store", credentials: "same-origin", redirect: "manual",
+      headers: { "X-XSRFToken": document.querySelector('meta[name="xsrf"]').content },
+    });
+    if (resp.status === 403 || resp.type === "opaqueredirect") throw new Error("signed out: reload the page");
+    if (!resp.ok) throw new Error("HTTP " + resp.status);
+    const d = await resp.json();
+    if (!reset && d.now < lastT) return refresh(true);  // the server clock was set back
+    if (reset) { samples = []; hist = new Map(); }
+    samples.push(...d.samples);
+    const keepFrom = d.now - Math.max(range, 900) - 60;
+    samples = samples.filter((s) => s.t >= keepFrom);
+    const live = new Set();
+    for (const c of d.containers) {
+      live.add(c.id);
+      const h = (hist.get(c.id) || []).concat(c.hist).filter((p) => p[0] >= keepFrom);
+      hist.set(c.id, h);
+    }
+    for (const id of hist.keys()) if (!live.has(id)) hist.delete(id);
+    if (samples.length) lastT = samples.at(-1).t;
+    data = d;
+    drawTiles();
+    charts.forEach(drawChart);
+    drawRows();
+    $("updated").textContent = "updated " + new Date(d.now * 1000).toLocaleTimeString();
+  } catch (e) {
+    $("updated").innerHTML = `<span class="error">${esc(e.message)}${e.message.startsWith("signed out") ? "" : " - retrying"}</span>`;
+  }
+}
+
+document.querySelectorAll(".ranges button").forEach((b) => b.addEventListener("click", () => {
+  document.querySelectorAll(".ranges button").forEach((x) => x.setAttribute("aria-pressed", x === b));
+  range = +b.dataset.range;
+  $("spark-range").textContent = b.textContent;
+  refresh(true);
+}));
+
+refresh(true);
+setInterval(() => refresh(false), 5000);
+window.addEventListener("resize", () => data && charts.forEach(drawChart));
+</script>
+</body>
+</html>

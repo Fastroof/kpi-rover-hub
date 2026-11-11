@@ -13,7 +13,7 @@ readonly PASSWORD_CHARS='ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz234567
 
 readonly -a COMMANDS=(
   "setup|install → reboot → check-host → build → check-image → start"
-  "status|sessions, CPU/RAM, GPU"
+  "status|sessions, CPU/RAM, GPU (in a browser: <hub>/services/load/)"
   "start|start the hub (creates missing accounts in users)"
   "stop|stop the hub"
   "restart|apply .env and hub config (sessions keep running)"
@@ -78,6 +78,7 @@ usage() {
   cat <<EOF
 
 Hub: ${URL} — logins and passwords in the users file, one "<user> <password>" per line.
+Load: ${URL}/services/load/ — CPU, RAM, disk and GPU per session (admins; history of 6 h).
 Session: Launcher → Desktop → KPI Rover. Code: ~/ros_ws (kept between sessions).
   First login clones and builds the code (~2 min, log: ~/work/kpi-setup.log).
   Start over or switch the kpi_rover branch: kpi-setup [branch].
