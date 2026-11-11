@@ -62,6 +62,18 @@ def unlimited(spawner):
 
 c.Spawner.pre_spawn_hook = unlimited
 
+
+# A stopped session (culled, stopped by the user or an admin) can't remove its robot from the arena itself
+def remove_from_arena(spawner):
+    try:
+        arena = docker.from_env().containers.get("kpi-rover-arena")
+        arena.exec_run(["kpi-arena", "remove"], environment={"JUPYTERHUB_USER": spawner.user.name}, detach=True)
+    except docker.errors.APIError:  # no arena, or it is stopped
+        pass
+
+
+c.Spawner.post_stop_hook = remove_from_arena
+
 c.DockerSpawner.environment = {
     "NVIDIA_DRIVER_CAPABILITIES": "all",  # "graphics" is required for OpenGL/EGL
     "NVIDIA_VISIBLE_DEVICES": "all",
